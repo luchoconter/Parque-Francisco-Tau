@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Trivia Francisco Tau</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body, html {
+      margin: 0; padding: 0; height: 100%;
+      font-family: Arial, sans-serif;
+    }
+    #map {
+      height: 100vh;
+      width: 100%;
+    }
+    #pregunta, #ventana-bienvenida {
+      position: absolute;
+      top: 20%;
+      left: 50%;
+      transform: translate(-50%, -20%);
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      z-index: 1000;
+      max-width: 320px;
+      text-align: center;
+      border: 2px solid #333;
+      box-shadow: 0 0 20px rgba(0,0,0,0.4);
+      display: none;
+    }
+    #pregunta.mostrar, #ventana-bienvenida.mostrar {
+      display: block;
+    }
+    button {
+      margin: 8px;
+      padding: 10px 20px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: 1px solid #444;
+      background-color: #f0f0f0;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #ddd;
+    }
+    #botones-fijos {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 9999;
+    }
+    #botones-fijos button {
+      display: block;
+      margin-bottom: 5px;
+    }
+    #panel-progreso {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      width: 300px;
+      background: rgba(255, 255, 255, 0.9);
+      border: 2px solid #333;
+      border-radius: 10px;
+      padding: 10px;
+      z-index: 9999;
+      box-shadow: 0 0 15px rgba(0,0,0,0.3);
+      font-size: 14px;
+    }
+    #barra-progreso {
+      width: 100%;
+      height: 20px;
+      background-color: #e0e0e0;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-bottom: 5px;
+    }
+    #progreso-porcentaje {
+      height: 100%;
+      width: 0%;
+      background-color: #4caf50;
+      transition: width 0.5s ease;
+    }
+    .ventana-final {
+      position: absolute;
+      top: 20%;
+      left: 50%;
+      transform: translate(-50%, -20%);
+      background: #fff;
+      padding: 25px;
+      border-radius: 12px;
+      border: 3px solid green;
+      box-shadow: 0 0 20px rgba(0,128,0,0.4);
+      text-align: center;
+      z-index: 10001;
+      display: none;
+      max-width: 350px;
+    }
+    .ventana-final button {
+      margin-top: 15px;
+    }
+  </style>
+</head>
+<body>
+<div id="map"></div>
+<div id="ventana-bienvenida">
+  <h2>¡Bienvenido a la trivia del "Parque Natural Francisco Tau"!</h2>
+  <p>¿En qué rango de edad te encontrás?</p>
+  <div id="botones-edad">
+    <button onclick="seleccionarEdad('menor10')">Menor a 10 años</button>
+    <button onclick="seleccionarEdad('10a15')">Entre 10 y 15 años</button>
+    <button onclick="seleccionarEdad('mayor15')">Mayor a 15 años</button>
+  </div>
+</div>
+<div id="pregunta">
+  <p id="texto-pregunta"></p>
+  <div id="opciones"></div>
+</div>
+<div id="botones-fijos">
+  <button onclick="mostrarProgreso()">📊 Progreso</button>
+  <button onclick="reiniciarTrivia()">🔄 Reiniciar</button>
+  <button onclick="mostrarUbicacion()">📍 Mi ubicación</button>
+</div>
+<div id="panel-progreso">
+  <div id="barra-progreso">
+    <div id="progreso-porcentaje"></div>
+  </div>
+  <div id="progreso-texto">0 / 3 preguntas respondidas - Puntaje: 0 / 9</div>
+</div>
+<div id="ventana-final" class="ventana-final">
+  <h2>🎉 ¡Felicitaciones!</h2>
+  <p>Has finalizado la trivia del <strong>Parque Natural Francisco Tau</strong>.</p>
+  <p id="mensaje-final"></p>
+  <p>Tu puntaje final es: <span id="puntaje-final"></span></p>
+  <button onclick="cerrarVentanaFinal()">Cerrar</button>
+</div>
+<audio id="sonido-correcto" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+<audio id="sonido-incorrecto" src="https://actions.google.com/sounds/v1/cartoon/boing.ogg"></audio>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script>
+  const preguntasPorEdad = {
+    menor10: [{
+      coords: [-32.6155, -62.6885],
+      texto: "¿Qué animal tiene orejas puntiagudas y vive en la reserva?",
+      opciones: ["Zorro", "Elefante", "Tigre"],
+      correcta: 0
+    }],
+    '10a15': [{
+      coords: [-32.6155, -62.6885],
+      texto: "¿Cuál de estos animales vive en la reserva y es omnívoro con hábitos nocturnos?",
+      opciones: ["Zorro", "Jirafa", "León"],
+      correcta: 0
+    }],
+    mayor15: [{
+      coords: [-32.6155, -62.6885],
+      texto: "¿Qué mamífero autóctono de tamaño medio, conocido por su pelaje rojizo y adaptabilidad, habita la reserva?",
+      opciones: ["Zorro", "Nutria", "Puma"],
+      correcta: 0
+    }]
+  };
+
+  let edadSeleccionada = null;
+  let progreso = { actual: 0, puntaje: 0, intentos: {} };
+  let mapa;
+  let marcadorUbicacion;
+
+  function iniciarMapa() {
+    mapa = L.map('map').setView(preguntas()[0].coords, 16);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(mapa);
+
+    preguntas().forEach((p, index) => {
+      const marker = L.marker(p.coords);
+      p.marker = marker;
+      marker.on('click', () => mostrarPregunta(index));
+    });
+
+    actualizarMarcadores();
+    actualizarPanelProgreso();
+  }
+
+  function preguntas() {
+    return preguntasPorEdad[edadSeleccionada] || [];
+  }
+
+  function seleccionarEdad(rango) {
+    edadSeleccionada = rango;
+    document.getElementById("ventana-bienvenida").style.display = "none";
+    iniciarMapa();
+  }
+
+  function mostrarPregunta(index) {
+    if (index !== progreso.actual) return;
+
+    const p = preguntas()[index];
+    const preguntaId = `pregunta_${index}`;
+    progreso.intentos[preguntaId] = progreso.intentos[preguntaId] || 0;
+
+    document.getElementById("texto-pregunta").textContent = p.texto;
+    const opcionesDiv = document.getElementById("opciones");
+    opcionesDiv.innerHTML = "";
+    document.getElementById("pregunta").classList.add("mostrar");
+
+    p.opciones.forEach((opcion, i) => {
+      const btn = document.createElement("button");
+      btn.textContent = opcion;
+      btn.onclick = () => {
+        if (i === p.correcta) {
+          document.getElementById("sonido-correcto").play();
+          const puntosGanados = Math.max(0, 3 - progreso.intentos[preguntaId]);
+          progreso.puntaje += puntosGanados;
+          alert(`¡Correcto! Obtuviste ${puntosGanados} punto(s).`);
+          document.getElementById("pregunta").classList.remove("mostrar");
+          p.marker.setOpacity(0.5);
+          progreso.actual++;
+
+          actualizarMarcadores();
+          actualizarPanelProgreso();
+
+          if (progreso.actual >= preguntas().length) mostrarVentanaFinal();
+
+        } else {
+          document.getElementById("sonido-incorrecto").play();
+          progreso.intentos[preguntaId]++;
+          alert("Respuesta incorrecta. Intentá de nuevo.");
+        }
+      };
+      opcionesDiv.appendChild(btn);
+    });
+  }
+
+  function actualizarMarcadores() {
+    preguntas().forEach((p, i) => {
+      mapa.removeLayer(p.marker);
+      if (i === progreso.actual) {
+        p.marker.addTo(mapa);
+        p.marker.setOpacity(1);
+      }
+    });
+  }
+
+  function mostrarProgreso() {
+    alert(`Progreso: ${progreso.actual} / ${preguntas().length} preguntas respondidas\nPuntaje total: ${progreso.puntaje} / ${preguntas().length * 3}`);
+  }
+
+  function reiniciarTrivia() {
+    if (confirm("¿Estás seguro que querés reiniciar tu progreso?")) location.reload();
+  }
+
+  function actualizarPanelProgreso() {
+    const porcentaje = Math.round((progreso.actual / preguntas().length) * 100);
+    document.getElementById("progreso-porcentaje").style.width = porcentaje + "%";
+    document.getElementById("progreso-texto").textContent = `${progreso.actual} / ${preguntas().length} preguntas respondidas - Puntaje: ${progreso.puntaje} / ${preguntas().length * 3}`;
+  }
+
+  function mostrarVentanaFinal() {
+    document.getElementById("puntaje-final").textContent = `${progreso.puntaje} / ${preguntas().length * 3}`;
+    const porcentaje = progreso.puntaje / (preguntas().length * 3);
+    let mensaje = "";
+    if (porcentaje < 0.4) mensaje = "Debes estudiar más de la fauna y flora de nuestro parque. ¡Vuelve a intentarlo!";
+    else if (porcentaje <= 0.6) mensaje = "Tienes conocimientos básicos de nuestra flora y fauna. ¡Puedes esforzarte un poco más!";
+    else if (porcentaje <= 0.89) mensaje = "Tienes muy buenos conocimientos del parque. ¡Un poco más de estudio y lo aprenderás todo!";
+    else mensaje = "¡Eres un experto conocedor del Parque Francisco Tau!";
+    document.getElementById("mensaje-final").textContent = mensaje;
+    document.getElementById("ventana-final").style.display = "block";
+  }
+
+  function cerrarVentanaFinal() {
+    document.getElementById("ventana-final").style.display = "none";
+  }
+
+  function mostrarUbicacion() {
+    if (!navigator.geolocation) {
+      alert("La geolocalización no está soportada por tu navegador.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      if (marcadorUbicacion) mapa.removeLayer(marcadorUbicacion);
+      marcadorUbicacion = L.marker([lat, lng]).addTo(mapa).bindPopup("📍 Estás aquí").openPopup();
+      mapa.setView([lat, lng], 16);
+    }, () => {
+      alert("No se pudo obtener tu ubicación.");
+    });
+  }
+
+  window.onload = () => {
+    document.getElementById("ventana-bienvenida").style.display = "block";
+  };
+</script>
+</body>
+</html>
